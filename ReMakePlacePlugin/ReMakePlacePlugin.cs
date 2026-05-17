@@ -922,6 +922,7 @@ public class ReMakePlacePlugin : IDalamudPlugin
                 break;
 
             case HousingArea.Outdoors:
+                // Only get plot location when we're actually outdoors
                 GetPlotLocation();
                 allObjects = Mem.GetExteriorPlacedObjects();
                 ExteriorItemList.ForEach(item =>
@@ -937,6 +938,13 @@ public class ReMakePlacePlugin : IDalamudPlugin
                     item.ItemStruct = IntPtr.Zero;
                 });
                 break;
+        }
+
+        // Add null check to prevent NullReferenceException
+        if (allObjects == null)
+        {
+            LogError("Failed to retrieve housing objects for current territory");
+            return;
         }
 
         List<HousingGameObject> unmatched = new List<HousingGameObject>();
@@ -1106,7 +1114,23 @@ public class ReMakePlacePlugin : IDalamudPlugin
 
         var placeName = row.Name.ToString();
 
-        PlotLocation = Plots.Map[placeName][mgr->Plot + 1];
+        // Check if the placeName exists in the Plots.Map
+        if (!Plots.Map.TryGetValue(placeName, out var plotDict))
+        {
+            LogError($"Territory '{placeName}' is not a valid housing area with plot data");
+            return;
+        }
+
+        var plotNumber = mgr->Plot + 1;
+
+        // Check if the plot number is valid
+        if (!plotDict.TryGetValue(plotNumber, out var location))
+        {
+            LogError($"Invalid plot number: {plotNumber} in territory '{placeName}'");
+            return;
+        }
+
+        PlotLocation = location;
     }
 
 
