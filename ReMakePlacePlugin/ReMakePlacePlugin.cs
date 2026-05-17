@@ -21,9 +21,9 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using static ReMakePlacePlugin.Memory;
+using AtkValueType = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType;
 using HousingFurniture = Lumina.Excel.Sheets.HousingFurniture;
 using TaskManager = ECommons.Automation.NeoTaskManager.TaskManager;
-using ValueType = FFXIVClientStructs.FFXIV.Component.GUI.ValueType;
 
 namespace ReMakePlacePlugin;
 
@@ -38,9 +38,6 @@ public class ReMakePlacePlugin : IDalamudPlugin
     public static List<HousingItem> ItemsToPlace = new List<HousingItem>();
 
     public static List<HousingItem> ItemsToDye = new List<HousingItem>();
-
-    private delegate bool UpdateLayoutDelegate(IntPtr a1);
-    private HookWrapper<UpdateLayoutDelegate> IsSaveLayoutHook;
 
     // Function for selecting an item, usually used when clicking on one in game.        
     public delegate void SelectItemDelegate(IntPtr housingStruct, IntPtr item);
@@ -128,26 +125,22 @@ public class ReMakePlacePlugin : IDalamudPlugin
 
     public unsafe void Initialize()
     {
-        IsSaveLayoutHook = HookManager.Hook<UpdateLayoutDelegate>("40 53 48 83 ec 20 48 8b d9 48 8b 0d ?? ?? ?? ?? e8 ?? ?? ?? ?? 33 d2 48 8b c8 e8 ?? ?? ?? ?? 84 c0 75 ?? 38 83 ?? 01 00 00", IsSaveLayoutDetour);
-
-        SelectItemHook = HookManager.Hook<SelectItemDelegate>("48 85 D2 0F 84 49 09 00 00 53 41 56 48 83 EC 48 48 89 6C 24 60 48 8B DA 48 89 74 24 70 4C 8B F1", SelectItemDetour);
+        SelectItemHook = HookManager.Hook<SelectItemDelegate>("48 85 D2 0F 84 ?? ?? ?? ?? 53 41 56 48 83 EC ?? 48 89 6C 24", SelectItemDetour);
 
         PlaceItemHook = HookManager.Hook<PlaceItemDelegate>("48 89 5C 24 10 48 89 74  24 18 57 48 83 EC 20 4c 8B 41 18 33 FF 0F B6 F2", PlaceItemDetour);
 
-        UpdateYardObjHook = HookManager.Hook<UpdateYardDelegate>("48 89 74 24 18 57 48 83 ec 20 b8 dc 02 00 00 0f b7 f2 ??", UpdateYardObj);
+        GetGameObjectHook = HookManager.Hook<GetObjectDelegate>("E8 ?? ?? ?? ?? EB ?? 48 3D", GetGameObject);
 
-        GetGameObjectHook = HookManager.Hook<GetObjectDelegate>("48 89 5c 24 08 48 89 74 24 10 57 48 83 ec 20 0f b7 f2 33 db 0f 1f 40 00 0f 1f 84 00 00 00 00 00", GetGameObject);
+        GetObjectFromIndexHook = HookManager.Hook<GetActiveObjectDelegate>("E8 ?? ?? ?? ?? EB ?? 41 0F B7 D0", GetObjectFromIndex);
 
-        GetObjectFromIndexHook = HookManager.Hook<GetActiveObjectDelegate>("81 fa 90 01 00 00 75 08 48 8b 81 88 0c 00 00 c3 0f b7 81 90 0c 00 00 3b d0 72 03 33 c0 c3", GetObjectFromIndex);
-
-        GetYardIndexHook = HookManager.Hook<GetIndexDelegate>("48 89 5c 24 10 57 48 83 ec 20 0f b6 d9", GetYardIndex);
+        GetYardIndexHook = HookManager.Hook<GetIndexDelegate>("E8 ?? ?? ?? ?? 44 0F B7 D8", GetYardIndex);
 
         // Dyeing management (Auto Confirm Dyeing Prompt (MiragePrismMiragePlateConfirm) & Select previous dye (ColorantColoring))
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, new[] { "MiragePrismMiragePlateConfirm", "ColorantColoring" }, OnPostSetupDyeConfirm);
 
         AddonFireCallbackHook = HookManager.HookAddress<AtkUnitBase.Delegates.FireCallback>(AtkUnitBase.Addresses.FireCallback.Value, FireCallbackDetour);
 
-        InteractWithHousingItemHook = HookManager.Hook<InteractWithHousingItemDelegate>("48 85 D2 0F 84 ?? ?? ?? ?? 57 41 56 48 83 EC ?? 0F B6 81", InteractWithHousingItemDetour);
+        InteractWithHousingItemHook = HookManager.Hook<InteractWithHousingItemDelegate>("48 85 D2 0F 84 ?? ?? ?? ?? 56 57 48 83 EC ?? 0F B6 81", InteractWithHousingItemDetour);
         GetSelectedHousingItemAddressHook = HookManager.Hook<GetSelectedHousingItemAddressDelegate>("E8 ?? ?? ?? ?? 48 85 C0 75 ?? E8 ?? ?? ?? ?? 48 8B C8 E8 ?? ?? ?? ?? 84 C0 75 ?? E8 ?? ?? ?? ?? 48 8B C8 E8 ?? ?? ?? ?? 8B 8B", GetSelectedHousingItemAddressDetour);
     }
 
@@ -217,22 +210,22 @@ public class ReMakePlacePlugin : IDalamudPlugin
             {
                 switch (a->Type)
                 {
-                    case ValueType.Int:
+                    case AtkValueType.Int:
                         {
                             atkValueList.Add(a->Int);
                             break;
                         }
-                    case ValueType.String:
+                    case AtkValueType.String:
                         {
                             atkValueList.Add(Marshal.PtrToStringUTF8(new IntPtr(a->String)));
                             break;
                         }
-                    case ValueType.UInt:
+                    case AtkValueType.UInt:
                         {
                             atkValueList.Add(a->UInt);
                             break;
                         }
-                    case ValueType.Bool:
+                    case AtkValueType.Bool:
                         {
                             atkValueList.Add(a->Byte != 0);
                             break;
@@ -375,9 +368,9 @@ public class ReMakePlacePlugin : IDalamudPlugin
     }
 
 
-    internal delegate ushort GetIndexDelegate(byte type, byte objStruct);
+    internal delegate ushort GetIndexDelegate(byte plotNumber, ushort inventoryIndex);
     internal static HookWrapper<GetIndexDelegate> GetYardIndexHook;
-    internal static ushort GetYardIndex(byte plotNumber, byte inventoryIndex)
+    internal static ushort GetYardIndex(byte plotNumber, ushort inventoryIndex)
     {
         var result = GetYardIndexHook.Original(plotNumber, inventoryIndex);
         return result;
@@ -398,15 +391,6 @@ public class ReMakePlacePlugin : IDalamudPlugin
     internal static IntPtr GetGameObject(IntPtr ObjList, ushort index)
     {
         return GetGameObjectHook.Original(ObjList, index);
-    }
-
-    public delegate void UpdateYardDelegate(IntPtr housingStruct, ushort index);
-    private static HookWrapper<UpdateYardDelegate> UpdateYardObjHook;
-
-
-    private void UpdateYardObj(IntPtr objectList, ushort index)
-    {
-        UpdateYardObjHook.Original(objectList, index);
     }
 
     unsafe static public void SelectItemDetour(IntPtr housing, IntPtr item)
@@ -1147,7 +1131,7 @@ public class ReMakePlacePlugin : IDalamudPlugin
         var activeObjList = (IntPtr)(mgr->Objects) - 0x08;
 
         var exteriorItems = Memory.GetContainer(InventoryType.HousingExteriorPlacedItems);
-
+        var exteriorItems2 = Memory.GetContainer(InventoryType.HousingExteriorPlacedItems2);
         GetPlotLocation();
 
         var rotateVector = Quaternion.CreateFromAxisAngle(Vector3.UnitY, PlotLocation.rotation);
@@ -1169,61 +1153,72 @@ public class ReMakePlacePlugin : IDalamudPlugin
         Layout.exteriorScale = 1;
         Layout.properties["entranceLayout"] = PlotLocation.entranceLayout;
 
-        for (int i = 0; i < exteriorItems->Size; i++)
+        // in hopes of more slots again in the future...
+        var exteriorItemInventories = new[]
         {
-            var item = exteriorItems->GetInventorySlot(i);
-            if (item == null || item->ItemId == 0) continue;
+            (InventoryType.HousingExteriorPlacedItems, 0),
+            (InventoryType.HousingExteriorPlacedItems2, 40)
+        };
 
-            if (!Svc.Data.GetExcelSheet<Item>().TryGetRow(item->ItemId, out var itemRow)) continue;
+        foreach (var (exteriorItemInventory, offset) in exteriorItemInventories)
+        {
+            var exteriorItemContainer = Memory.GetContainer(exteriorItemInventory);
 
-            var itemInfoIndex = GetYardIndex(mgr->Plot, (byte)i);
-
-            var itemInfo = HousingObjectManager.GetItemInfo(mgr, itemInfoIndex);
-            if (itemInfo == null)
+            for (int i = 0; i < exteriorItemContainer->Size; i++)
             {
-                continue;
-            }
+                var item = exteriorItemContainer->GetInventorySlot(i);
+                if (item == null || item->ItemId == 0) continue;
 
-            var location = new Vector3(itemInfo->Position.X, itemInfo->Position.Y, itemInfo->Position.Z);
+                if (!Svc.Data.GetExcelSheet<Item>().TryGetRow(item->ItemId, out var itemRow)) continue;
 
-            var newLocation = Vector3.Transform(location - PlotLocation.ToVector(), rotateVector);
+                var itemInfoIndex = GetYardIndex(mgr->Plot, (byte)(i + offset));
 
-            var housingItem = new HousingItem(
-                itemRow,
-                item->Stains[0],
-                newLocation.X,
-                newLocation.Y,
-                newLocation.Z,
-                itemInfo->Rotation + PlotLocation.rotation
-            );
+                var itemInfo = HousingObjectManager.GetItemInfo(mgr, itemInfoIndex);
+                if (itemInfo == null)
+                {
+                    continue;
+                }
 
-            var gameObj = (HousingGameObject*)GetObjectFromIndex(activeObjList, (uint)itemInfo->Index);
+                var location = new Vector3(itemInfo->Position.X, itemInfo->Position.Y, itemInfo->Position.Z);
 
-            if (gameObj == null)
-            {
-                gameObj = (HousingGameObject*)GetGameObject(objectListAddr, itemInfoIndex);
+                var newLocation = Vector3.Transform(location - PlotLocation.ToVector(), rotateVector);
+
+                var housingItem = new HousingItem(
+                    itemRow,
+                    item->Stains[0],
+                    newLocation.X,
+                    newLocation.Y,
+                    newLocation.Z,
+                    itemInfo->Rotation + PlotLocation.rotation
+                );
+
+                var gameObj = (HousingGameObject*)GetObjectFromIndex(activeObjList, (uint)itemInfo->Index);
+
+                if (gameObj == null)
+                {
+                    gameObj = (HousingGameObject*)GetGameObject(objectListAddr, itemInfoIndex);
+
+                    if (gameObj != null)
+                    {
+
+                        location = new Vector3(gameObj->X, gameObj->Y, gameObj->Z);
+
+                        newLocation = Vector3.Transform(location - PlotLocation.ToVector(), rotateVector);
+
+                        housingItem.X = newLocation.X;
+                        housingItem.Y = newLocation.Y;
+                        housingItem.Z = newLocation.Z;
+                    }
+                }
 
                 if (gameObj != null)
                 {
-
-                    location = new Vector3(gameObj->X, gameObj->Y, gameObj->Z);
-
-                    newLocation = Vector3.Transform(location - PlotLocation.ToVector(), rotateVector);
-
-                    housingItem.X = newLocation.X;
-                    housingItem.Y = newLocation.Y;
-                    housingItem.Z = newLocation.Z;
+                    housingItem.ItemStruct = (IntPtr)gameObj->Item;
                 }
-            }
 
-            if (gameObj != null)
-            {
-                housingItem.ItemStruct = (IntPtr)gameObj->Item;
+                ExteriorItemList.Add(housingItem);
             }
-
-            ExteriorItemList.Add(housingItem);
         }
-
         Config.Save();
     }
 
@@ -1343,22 +1338,7 @@ public class ReMakePlacePlugin : IDalamudPlugin
         Config.Save();
     }
 
-
-    public bool IsSaveLayoutDetour(IntPtr housingStruct)
-    {
-        var result = IsSaveLayoutHook.Original(housingStruct);
-
-        if (ApplyChange)
-        {
-            ApplyChange = false;
-            return true;
-        }
-
-        return result;
-    }
-
-
-    private void TerritoryChanged(ushort e)
+    private void TerritoryChanged(uint territory)
     {
         Config.DrawScreen = false;
         Config.Save();

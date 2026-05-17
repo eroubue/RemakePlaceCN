@@ -68,7 +68,10 @@ public class Furniture : BasicItem
         if (properties.TryGetValue("color", out object colorObj))
         {
             var color = (string)colorObj;
-            return System.Drawing.ColorTranslator.FromHtml("#" + color.Substring(0, 6));
+            if (color.Length >= 6)
+            {
+                return System.Drawing.ColorTranslator.FromHtml("#" + color.Substring(0, 6));
+            }
         }
 
         return Color.Empty;
@@ -516,6 +519,9 @@ public class SaveLayoutManager
                     break;
                 case "h1":
                     district.name = "Minimalist";
+                    break;
+                case "h2":
+                    district.name = "Dark Minimalist";
                     break;
                 default:
                     break;

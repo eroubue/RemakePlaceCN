@@ -1,11 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Numerics;
-using System.Runtime.InteropServices;
 using ECommons.DalamudServices;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.MJI;
+using FFXIVClientStructs.FFXIV.Client.LayoutEngine;
 using Lumina.Excel.Sheets;
+using System;
+using System.Collections.Generic;
+using System.Numerics;
+using System.Runtime.InteropServices;
+
 using static ReMakePlacePlugin.ReMakePlacePlugin;
 
 namespace ReMakePlacePlugin;
@@ -24,22 +26,21 @@ public unsafe class Memory
     private IntPtr HousingModulePtr { get; }
     private IntPtr LayoutWorldPtr { get; }
 
-    public HousingModule* HousingModule => HousingModulePtr != IntPtr.Zero ? (HousingModule*)Marshal.ReadIntPtr(HousingModulePtr) : null;
-    public LayoutWorld* LayoutWorld => LayoutWorldPtr != IntPtr.Zero ? (LayoutWorld*)Marshal.ReadIntPtr(LayoutWorldPtr) : null;
-    public HousingObjectManager* CurrentManager => HousingModule->currentTerritory;
-    public HousingStructure* HousingStructure => LayoutWorld->HousingStruct;
+    public unsafe HousingModule* HousingModule => HousingModulePtr != IntPtr.Zero ? (HousingModule*)Marshal.ReadIntPtr(HousingModulePtr) : null;
+    public unsafe LayoutWorld* LayoutWorld => LayoutWorldPtr != IntPtr.Zero ? (LayoutWorld*)Marshal.ReadIntPtr(LayoutWorldPtr) : null;
+    public unsafe HousingObjectManager* CurrentManager => HousingModule->currentTerritory;
+    public unsafe HousingStructure* HousingStructure => LayoutWorld->HousingStruct;
 
     private Memory()
     {
         try
         {
-            placeAnywhere = Svc.SigScanner.ScanText("C6 ?? ?? ?? 00 00 00 8B FE 48 89") + 6;
+            placeAnywhere = Svc.SigScanner.ScanText("C6 83 ?? ?? ?? ?? ?? 0F 29 44 24") + 6;
             wallAnywhere = Svc.SigScanner.ScanText("48 85 C0 74 ?? C6 87 ?? ?? 00 00 00") + 11;
             wallmountAnywhere = Svc.SigScanner.ScanText("c6 87 83 01 00 00 00 48 83 c4 ??") + 6;
 
             HousingModulePtr = Svc.SigScanner.GetStaticAddressFromSig("48 8B 05 ?? ?? ?? ?? 8B 52");
             LayoutWorldPtr = Svc.SigScanner.GetStaticAddressFromSig("48 8B D1 48 8B 0D ?? ?? ?? ?? 48 85 C9 74 0A", 3);
-
         }
         catch (Exception e)
         {
@@ -71,25 +72,25 @@ public unsafe class Memory
 
     public string GetIndoorHouseSize()
     {
-        var territoryId = Instance.GetTerritoryTypeId();
+        var territoryId = Memory.Instance.GetTerritoryTypeId();
 
         if (!Svc.Data.GetExcelSheet<TerritoryType>().TryGetRow(territoryId, out var row)) return null;
 
         var placeName = row.Name.ToString();
-        var sizeName = placeName.Substring(1, 3);
+        var sizeName = placeName.Substring(2, 2);
 
         switch (sizeName)
         {
-            case "1i1":
+            case "i1":
                 return "Small";
 
-            case "1i2":
+            case "i2":
                 return "Medium";
 
-            case "1i3":
+            case "i3":
                 return "Large";
 
-            case "1i4":
+            case "i4":
                 return "Apartment";
 
             default:
@@ -158,41 +159,48 @@ public unsafe class Memory
         return ret;
     }
 
-    public List<HousingGameObject> GetExteriorPlacedObjects()
+    public unsafe List<HousingGameObject> GetExteriorPlacedObjects()
     {
         var objects = new List<HousingGameObject>();
 
-        var mgr = Instance.HousingModule->outdoorTerritory;
+        var mgr = Memory.Instance.HousingModule->outdoorTerritory;
 
         var objectListAddr = (IntPtr)(&mgr->ObjectList);
         var activeObjList = (IntPtr)(mgr->Objects) - 0x08;
 
-        var exteriorItems = GetContainer(InventoryType.HousingExteriorPlacedItems);
-
-        for (int i = 0; i < exteriorItems->Size; i++)
+        var exteriorItemInventories = new[]
         {
-            var item = exteriorItems->GetInventorySlot(i);
-            if (item == null || item->ItemId == 0) continue;
+            (InventoryType.HousingExteriorPlacedItems, 0),
+            (InventoryType.HousingExteriorPlacedItems2, 40)
+        };
 
-            var itemInfoIndex = GetYardIndex(mgr->Plot, (byte)i);
-
-            var itemInfo = HousingObjectManager.GetItemInfo(mgr, itemInfoIndex);
-            if (itemInfo == null) continue;
-
-            var gameObj = (HousingGameObject*)GetObjectFromIndex(activeObjList, (uint)itemInfo->Index);
-            if (gameObj == null) gameObj = (HousingGameObject*)GetGameObject(objectListAddr, itemInfoIndex);
-
-            if (gameObj != null)
+        foreach (var (exteriorItemInventory, offset) in exteriorItemInventories)
+        {
+            var exteriorItemContainer = Memory.GetContainer(exteriorItemInventory);
+            for (int i = 0; i < exteriorItemContainer->Size; i++)
             {
-                objects.Add(*gameObj);
+                var item = exteriorItemContainer->GetInventorySlot(i);
+                if (item == null || item->ItemId == 0) continue;
+
+                var itemInfoIndex = GetYardIndex(mgr->Plot, (byte)(i + offset));
+
+                var itemInfo = HousingObjectManager.GetItemInfo(mgr, itemInfoIndex);
+                if (itemInfo == null) continue;
+
+                var gameObj = (HousingGameObject*)GetObjectFromIndex(activeObjList, (uint)itemInfo->Index);
+                if (gameObj == null) gameObj = (HousingGameObject*)GetGameObject(objectListAddr, itemInfoIndex);
+
+                if (gameObj != null)
+                {
+                    objects.Add(*gameObj);
+                }
+
             }
-
         }
-
         return objects;
     }
 
-    public bool TryGetIslandGameObjectList(out List<HousingGameObject> objects)
+    public unsafe bool TryGetIslandGameObjectList(out List<HousingGameObject> objects)
     {
         objects = new List<HousingGameObject>();
 
@@ -209,7 +217,7 @@ public unsafe class Memory
         return true;
     }
 
-    public bool TryGetNameSortedHousingGameObjectList(out List<HousingGameObject> objects)
+    public unsafe bool TryGetNameSortedHousingGameObjectList(out List<HousingGameObject> objects)
     {
         objects = null;
         if (HousingModule == null ||
@@ -219,7 +227,7 @@ public unsafe class Memory
 
         objects = new List<HousingGameObject>();
 
-        for (var i = 0; i < 400; i++)
+        for (var i = 0; i < 600; i++)
         {
             var oPtr = HousingModule->GetCurrentManager()->Objects[i];
             if (oPtr == 0)
@@ -246,7 +254,7 @@ public unsafe class Memory
     }
 
 
-    public bool GetActiveLayout(out LayoutManager manager)
+    public unsafe bool GetActiveLayout(out LayoutManager manager)
     {
         manager = new LayoutManager();
         if (LayoutWorld == null ||
@@ -275,7 +283,7 @@ public unsafe class Memory
         None
     }
 
-    public HousingArea GetCurrentTerritory()
+    public unsafe HousingArea GetCurrentTerritory()
     {
         if (!Svc.Data.GetExcelSheet<TerritoryType>().TryGetRow(GetTerritoryTypeId(), out var territoryRow))
         {
@@ -296,28 +304,34 @@ public unsafe class Memory
         if (HousingModule == null) return HousingArea.None;
 
         if (HousingModule->IsOutdoors()) return HousingArea.Outdoors;
-        return HousingArea.Indoors;
+        else return HousingArea.Indoors;
     }
 
-    public bool IsHousingMode()
+    public unsafe bool IsHousingMode()
     {
-        return true;
+        if (HousingStructure == null)
+            return false;
+        return HousingStructure->Mode != HousingLayoutMode.None;
     }
 
     /// <summary>
     /// Checks if you can edit a housing item, specifically checks that rotate mode is active.
     /// </summary>
     /// <returns>Boolean state if housing menu is on or off.</returns>
-    public bool CanEditItem()
+    public unsafe bool CanEditItem()
     {
-        return true;
+        if (HousingStructure == null)
+            return false;
+
+        // Rotate mode only.
+        return HousingStructure->Mode == HousingLayoutMode.Rotate;
     }
 
     /// <summary>
     /// Checks if you can dye a housing item, specifically checks that Furnishing Color mode is active.
     /// </summary>
     /// <returns>Boolean state if furnishing color menu is on or off.</returns>
-    public bool CanDyeItem()
+    public unsafe bool CanDyeItem()
     {
         if (HousingStructure == null)
             return false;
@@ -330,7 +344,7 @@ public unsafe class Memory
     /// Writes the position vector to memory.
     /// </summary>
     /// <param name="newPosition">Position vector to write.</param>
-    public void WritePosition(Vector3 newPosition)
+    public unsafe void WritePosition(Vector3 newPosition)
     {
         // Don't write if housing mode isn't on.
         if (!CanEditItem())
@@ -351,7 +365,7 @@ public unsafe class Memory
         }
     }
 
-    public void WriteRotation(Vector3 newRotation)
+    public unsafe void WriteRotation(Vector3 newRotation)
     {
         // Don't write if housing mode isn't on.
         if (!CanEditItem())

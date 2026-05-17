@@ -34,9 +34,32 @@ public class HousingData
 
         _unitedDict = new Dictionary<uint, uint>();
         foreach (var row in unitedExteriorSheet)
-            foreach (var type in unitedExteriorSheet.Columns)
-                _unitedDict[type.Offset] = row.RowId;
+        {
+            // Ugly but cba to do better now
+            if (row.Roof.RowId != 0)
+                _unitedDict[row.Roof.RowId] = row.RowId;
 
+            if (row.Walls.RowId != 0)
+                _unitedDict[row.Walls.RowId] = row.RowId;
+
+            if (row.Windows.RowId != 0)
+                _unitedDict[row.Windows.RowId] = row.RowId;
+
+            if (row.Door.RowId != 0)
+                _unitedDict[row.Door.RowId] = row.RowId;
+
+            if (row.OptionalRoof.RowId != 0)
+                _unitedDict[row.OptionalRoof.RowId] = row.RowId;
+
+            if (row.OptionalWall.RowId != 0)
+                _unitedDict[row.OptionalWall.RowId] = row.RowId;
+
+            if (row.OptionalSignboard.RowId != 0)
+                _unitedDict[row.OptionalSignboard.RowId] = row.RowId;
+
+            if (row.Fence.RowId != 0)
+                _unitedDict[row.Fence.RowId] = row.RowId;
+        }
 
         _itemDict = Svc.Data.GetExcelSheet<Item>()
             .Where(item => item.AdditionalData.RowId != 0 && (item.ItemSearchCategory.RowId == 65 || item.ItemSearchCategory.RowId == 66))

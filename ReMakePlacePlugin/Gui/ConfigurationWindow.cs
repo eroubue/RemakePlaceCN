@@ -601,7 +601,7 @@ public class ConfigurationWindow : Window, IDisposable
                 Config.Save();
             }
 
-            if (ImGui.BeginTable("FixtureList", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg))
+            if (ImGui.BeginTable("FixtureList", 3, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable))
             {
                 ImGui.TableSetupColumn("Level", ImGuiTableColumnFlags.None, 2);
                 ImGui.TableSetupColumn("Fixture", ImGuiTableColumnFlags.None, 1);

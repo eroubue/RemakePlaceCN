@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Project Sdk="Dalamud.CN.NET.Sdk/14.0.1">
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
 	<PropertyGroup>
-		<PluginVersion>7.4.0</PluginVersion>
+		<PluginVersion>7.5.1</PluginVersion>
 		<LangVersion>latest</LangVersion>
 		<AssemblyTitle>ReMakePlacePlugin</AssemblyTitle>
 		<Product>ReMakePlacePlugin</Product>
@@ -41,10 +41,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <PackageReference Include="ECommons" Version="3.1.0.5" />
+	  <PackageReference Include="ECommons" Version="3.2.0.6" />
 	</ItemGroup>
 
 	<ItemGroup>
-	  <PackageReference Update="DalamudPackager" Version="14.0.1" />
+	  <PackageReference Update="DalamudPackager" Version="15.0.0" />
+	  <PackageReference Update="DotNet.ReproducibleBuilds" Version="2.0.2" />
 	</ItemGroup>
 </Project>

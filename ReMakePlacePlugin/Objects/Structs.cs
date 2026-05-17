@@ -127,18 +127,18 @@ public unsafe struct HousingGameObject
 [StructLayout(LayoutKind.Explicit)]
 public unsafe struct HousingObjectManager
 {
-    [FieldOffset(0x0010)] public IntPtr ObjectList;
-    [FieldOffset(0x8980)] public fixed ulong Objects[400];
+    [FieldOffset(0x00010)] public IntPtr ObjectList;
+    [FieldOffset(0x11260)] public fixed ulong Objects[600];
 
-    [FieldOffset(0x96A2)] public byte Ward;
-    [FieldOffset(0x96A8)] public byte Plot;
+    [FieldOffset(0x125D2)] public byte Ward;
+    [FieldOffset(0x125D8)] public byte Plot;
 
-    [FieldOffset(0x96E8)] public HousingGameObject* IndoorActiveObject2;
-    [FieldOffset(0x96F0)] public HousingGameObject* IndoorHoverObject;
-    [FieldOffset(0x96F8)] public HousingGameObject* IndoorActiveObject;
-    [FieldOffset(0x9AB8)] public HousingGameObject* OutdoorActiveObject2;
-    [FieldOffset(0x9AC0)] public HousingGameObject* OutdoorHoverObject;
-    [FieldOffset(0x9AC8)] public HousingGameObject* OutdoorActiveObject;
+    [FieldOffset(0x12618)] public HousingGameObject* IndoorActiveObject2;
+    [FieldOffset(0x12620)] public HousingGameObject* IndoorHoverObject;
+    [FieldOffset(0x12628)] public HousingGameObject* IndoorActiveObject;
+    [FieldOffset(0x129E8)] public HousingGameObject* OutdoorActiveObject2;
+    [FieldOffset(0x129F0)] public HousingGameObject* OutdoorHoverObject;
+    [FieldOffset(0x129F8)] public HousingGameObject* OutdoorActiveObject;
 
     public static FFXIVClientStructs.FFXIV.Client.Game.HousingFurniture* GetItemInfo(HousingObjectManager* mgr, int index)
     {
@@ -184,8 +184,8 @@ public unsafe struct LayoutWorld
 public struct LayoutManager
 {
     [FieldOffset(0x20)] public uint TerritoryTypeId;
-    [FieldOffset(0x80)] private readonly IntPtr _housingController;
-    [FieldOffset(0x90)] private readonly IntPtr _indoorAreaData;
+    [FieldOffset(0x0A0)] private readonly IntPtr _housingController;
+    [FieldOffset(0x0B0)] private readonly IntPtr _indoorAreaData;
 
     public HousingController? HousingController
     {
