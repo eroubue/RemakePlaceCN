@@ -120,11 +120,7 @@ public class ConfigurationWindow : Window, IDisposable
 
     private bool CheckModeForSave()
     {
-        if (Memory.Instance.IsHousingMode()) return true;
-
-        LogError("Unable to save layouts outside of Layout mode");
-        LogLayoutMode();
-        return false;
+        return true;
     }
 
     private bool CheckModeForLoad(bool ApplyLayout = false)
@@ -449,16 +445,26 @@ public class ConfigurationWindow : Window, IDisposable
             (ctrlKeyPressed ? "尝试应用染料，染色窗口需要打开" : "按住 CTRL 键应用染料"),
         menuDimensions.X);
 
-        //DrawMainMenuButton("Place Items Down", () =>
-        //{
-        //    Config.Save();
-        //    Log($"Number of Items interior {Plugin.InteriorItemList.Count}");
-        //    //ReMakePlacePlugin.PlaceItemInternal();
-        //    //PlaceItemsFromFile();
-        //},
-        //Config.SaveLocation.IsNullOrEmpty(),
-        //"Tries to place items from Inventory & Storage",
-        //menuDimensions.X);
+        DrawMainMenuButton("(测试)一键放家具", () =>
+        {
+            Config.Save();
+            Log($"Number of Items interior {Plugin.InteriorItemList.Count}");
+
+            if (!Config.SaveLocation.IsNullOrEmpty() && CheckModeForLoad())
+            {
+                SaveLayoutManager.ImportLayout(Config.SaveLocation);
+                Log($"Imported layout with {Plugin.InteriorItemList.Count} interior + {Plugin.ExteriorItemList.Count} exterior items");
+                Plugin.MatchLayout();
+                Plugin.PlaceItemsFromInventory();
+            }
+            else
+            {
+                Log("Please Load a layout first, then click this button in Place mode");
+            }
+        },
+        Config.SaveLocation.IsNullOrEmpty(),
+        "尝试从背包和仓库里放置物品",
+        menuDimensions.X);
 
         DrawMainMenuButton("另存为", () =>
         {

@@ -67,7 +67,6 @@ public enum HousingLayoutMode
     Move,
     Rotate,
     Store,
-    Place,
     FurnishingColor = 5,
     Remove = 6
 }

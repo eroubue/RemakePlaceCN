@@ -1,8 +1,8 @@
 {
-  "Author": "ReMakePlace Maintainers",
-  "Name": "ReMakePlace Plugin",
+  "Author": "ReMakePlace Maintainers Nag0mi",
+  "Name": "ReMakePlace Plugin CN",
   "InternalName": "ReMakePlacePlugin",
-  "Description": "Automatically save & load interior and exterior house layouts. Import/export layouts from the ReMakePlace program.",
+  "Description": "自动保存和加载室内及室外房屋布局。从 ReMakePlace 程序导入/导出布局。",
   "RepoUrl": "https://github.com/ReMakePlace/plugin",
   "Tags": [
     "makeplace",
@@ -12,5 +12,5 @@
 	"re-makeplace"
   ],
   "IconUrl": "https://raw.githubusercontent.com/ReMakePlace/Plugin/master/icon.png",
-  "Punchline": "Automatically save & load furniture layouts in your house."
+  "Punchline": "自动保存和加载室内及室外房屋布局。"
 }

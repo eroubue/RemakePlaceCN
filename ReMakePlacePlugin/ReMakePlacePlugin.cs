@@ -51,6 +51,8 @@ public class ReMakePlacePlugin : IDalamudPlugin
 
     public static bool CurrentlyPlacingItems = false;
 
+    private static Queue<(HousingItem LayoutItem, uint ItemId, int InventoryIndex, InventoryType ContainerType)> InventoryPlacementQueue = new();
+
     public static bool CurrentlyDyeingItems = false;
 
     public static bool OriginalPlaceAnywhere = false;
@@ -138,6 +140,9 @@ public class ReMakePlacePlugin : IDalamudPlugin
         // Dyeing management (Auto Confirm Dyeing Prompt (MiragePrismMiragePlateConfirm) & Select previous dye (ColorantColoring))
         Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, new[] { "MiragePrismMiragePlateConfirm", "ColorantColoring" }, OnPostSetupDyeConfirm);
 
+        // Context menu hook for auto-selecting "布置" when placing items from inventory
+        Svc.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, new[] { "ContextMenu" }, OnContextMenuPostSetup);
+
         AddonFireCallbackHook = HookManager.HookAddress<AtkUnitBase.Delegates.FireCallback>(AtkUnitBase.Addresses.FireCallback.Value, FireCallbackDetour);
 
         InteractWithHousingItemHook = HookManager.Hook<InteractWithHousingItemDelegate>("48 85 D2 0F 84 ?? ?? ?? ?? 56 57 48 83 EC ?? 0F B6 81", InteractWithHousingItemDetour);
@@ -155,6 +160,7 @@ public class ReMakePlacePlugin : IDalamudPlugin
         }
 
         Svc.AddonLifecycle.UnregisterListener(OnPostSetupDyeConfirm);
+        Svc.AddonLifecycle.UnregisterListener(OnContextMenuPostSetup);
 
         HookManager.Dispose();
 
@@ -469,23 +475,443 @@ public class ReMakePlacePlugin : IDalamudPlugin
 
     public static void PlaceItemInternal(HousingItem rowItem)
     {
-        var MemInstance = Memory.Instance;
+        if (rowItem == null || rowItem.ItemStruct == IntPtr.Zero)
+        {
+            LogError("PlaceItemInternal: invalid item");
+            return;
+        }
+
+        var mem = Memory.Instance;
+        if (mem == null)
+        {
+            LogError("PlaceItemInternal: Memory not initialized");
+            return;
+        }
+
+        var territory = mem.GetCurrentTerritory();
 
         Vector3 position = new Vector3(rowItem.X, rowItem.Y, rowItem.Z);
         Vector3 rotation = new Vector3();
-
         rotation.Y = (float)(rowItem.Rotate * 180 / Math.PI);
 
-        if (MemInstance.GetCurrentTerritory() == Memory.HousingArea.Outdoors)
+        switch (territory)
         {
-            var rotateVector = Quaternion.CreateFromAxisAngle(Vector3.UnitY, -PlotLocation.rotation);
-            position = Vector3.Transform(position, rotateVector) + PlotLocation.ToVector();
-            rotation.Y = (float)((rowItem.Rotate - PlotLocation.rotation) * 180 / Math.PI);
+            case Memory.HousingArea.Outdoors:
+            {
+                var rotateVector = Quaternion.CreateFromAxisAngle(Vector3.UnitY, -PlotLocation.rotation);
+                position = Vector3.Transform(position, rotateVector) + PlotLocation.ToVector();
+                rotation.Y = (float)((rowItem.Rotate - PlotLocation.rotation) * 180 / Math.PI);
+                break;
+            }
+            case Memory.HousingArea.Indoors:
+            case Memory.HousingArea.Island:
+                break;
+            default:
+                LogError($"PlaceItemInternal: unsupported territory {territory}");
+                return;
         }
-        MemInstance.WritePosition(position);
-        MemInstance.WriteRotation(rotation);
+
+        mem.WritePosition(position);
+        mem.WriteRotation(rotation);
 
         PlaceItem(rowItem.ItemStruct);
+    }
+
+    public static void PlaceItemInternal()
+    {
+        if (!CurrentlyPlacingItems)
+        {
+            Log("No items queued for placement. Import a layout first.");
+            return;
+        }
+
+        if (ItemsToPlace.Count == 0)
+        {
+            Memory.Instance.SetPlaceAnywhere(OriginalPlaceAnywhere);
+            CurrentlyPlacingItems = false;
+            Log("Finished placing items from inventory/storage");
+            return;
+        }
+
+        try
+        {
+            while (ItemsToPlace.Count > 0)
+            {
+                var item = ItemsToPlace.First();
+                ItemsToPlace.RemoveAt(0);
+
+                if (item.ItemStruct == IntPtr.Zero) continue;
+
+                if (item.CorrectLocation && item.CorrectRotation)
+                {
+                    Log($"{item.Name} is already correctly placed");
+                    continue;
+                }
+
+                if (ItemsToPlace.Count > 0)
+                    Svc.Framework.RunOnTick(PlaceItemInternal, TimeSpan.FromMilliseconds(500));
+
+                SetItemPosition(item);
+                return;
+            }
+        }
+        catch (Exception e)
+        {
+            LogError($"Error: {e.Message}", e.StackTrace);
+        }
+
+        Memory.Instance.SetPlaceAnywhere(OriginalPlaceAnywhere);
+        CurrentlyPlacingItems = false;
+        Log("Finished placing items from inventory/storage");
+    }
+
+    public unsafe void PlaceItemsFromInventory()
+    {
+        if (CurrentlyPlacingItems)
+        {
+            Log("Already placing items");
+            return;
+        }
+
+        var mem = Memory.Instance;
+        var territory = mem.GetCurrentTerritory();
+
+        var housingStruct = mem.HousingStructure;
+        if (housingStruct == null)
+        {
+            LogError("HousingStructure not available. Enter housing edit mode first.");
+            return;
+        }
+
+        List<HousingItem> layoutItems = territory == Memory.HousingArea.Indoors ? InteriorItemList : ExteriorItemList;
+        var missingItems = layoutItems.Where(item => item.ItemStruct == IntPtr.Zero).ToList();
+        if (missingItems.Count == 0)
+        {
+            Log("All layout items are already placed in the house");
+            return;
+        }
+
+        InventoryPlacementQueue.Clear();
+        var foundItemIds = new HashSet<uint>();
+
+        foreach (var missingItem in missingItems)
+        {
+            if (foundItemIds.Contains(missingItem.ItemKey)) continue;
+
+            var found = ScanInventoryForItem(missingItem, territory, out var slotIndex, out var containerType);
+            if (found)
+            {
+                InventoryPlacementQueue.Enqueue((missingItem, missingItem.ItemKey, slotIndex, containerType));
+                foundItemIds.Add(missingItem.ItemKey);
+            }
+            else
+            {
+                Log($"Item not found in inventory/storage: {missingItem.Name}");
+            }
+        }
+
+        if (InventoryPlacementQueue.Count == 0)
+        {
+            Log("No matching items found in inventory or storage");
+            return;
+        }
+
+        Log($"Found {InventoryPlacementQueue.Count} items to place from inventory/storage");
+        CurrentlyPlacingItems = true;
+        OriginalPlaceAnywhere = mem.GetPlaceAnywhere();
+        ProcessNextInventoryPlacement();
+    }
+
+    private unsafe bool ScanInventoryForItem(HousingItem layoutItem, Memory.HousingArea territory,
+        out int slotIndex, out InventoryType containerType)
+    {
+        slotIndex = -1;
+        containerType = default;
+
+        var invTypes = new[] { InventoryType.Inventory1, InventoryType.Inventory2, InventoryType.Inventory3, InventoryType.Inventory4 };
+        foreach (var invType in invTypes)
+        {
+            if (ScanContainer(invType, layoutItem.ItemKey, out slotIndex))
+            {
+                containerType = invType;
+                return true;
+            }
+        }
+
+        if (territory == Memory.HousingArea.Indoors)
+        {
+            var storeroomTypes = new[]
+            {
+                InventoryType.HousingInteriorStoreroom1, InventoryType.HousingInteriorStoreroom2,
+                InventoryType.HousingInteriorStoreroom3, InventoryType.HousingInteriorStoreroom4,
+                InventoryType.HousingInteriorStoreroom5, InventoryType.HousingInteriorStoreroom6,
+                InventoryType.HousingInteriorStoreroom7, InventoryType.HousingInteriorStoreroom8,
+                InventoryType.HousingInteriorStoreroom9, InventoryType.HousingInteriorStoreroom10,
+                InventoryType.HousingInteriorStoreroom11
+            };
+            foreach (var invType in storeroomTypes)
+            {
+                if (ScanContainer(invType, layoutItem.ItemKey, out slotIndex))
+                {
+                    containerType = invType;
+                    return true;
+                }
+            }
+        }
+        else
+        {
+            var storeroomTypes = new[] { InventoryType.HousingExteriorStoreroom, InventoryType.HousingExteriorStoreroom2 };
+            foreach (var invType in storeroomTypes)
+            {
+                if (ScanContainer(invType, layoutItem.ItemKey, out slotIndex))
+                {
+                    containerType = invType;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static unsafe bool ScanContainer(InventoryType invType, uint itemId, out int slotIndex)
+    {
+        slotIndex = -1;
+        var container = GetContainer(invType);
+        if (container == null || container->Size <= 0) return false;
+
+        for (int i = 0; i < container->Size; i++)
+        {
+            var slot = container->GetInventorySlot(i);
+            if (slot == null || slot->ItemId == 0) continue;
+            if (slot->ItemId == itemId)
+            {
+                slotIndex = i;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private unsafe void ProcessNextInventoryPlacement()
+    {
+        if (_inventoryPendingItem != null)
+        {
+            var inventoryAddon = FindHousingInventoryAddon();
+            if (inventoryAddon == null)
+            {
+                CleanupInventoryPlacement();
+                return;
+            }
+
+            if (!SelectItemInInventoryAddon(inventoryAddon, _inventoryPendingItem))
+            {
+                if (_inventoryScrollPage > 0)
+                {
+                    Svc.Framework.RunOnTick(ProcessNextInventoryPlacement, TimeSpan.FromMilliseconds(Config.LoadInterval));
+                }
+                else
+                {
+                    LogError($"Could not find '{_inventoryPendingItem.Name}' in the housing inventory addon after full scan");
+                    _inventoryPendingItem = null;
+                    Svc.Framework.RunOnTick(ProcessNextInventoryPlacement, TimeSpan.FromMilliseconds(Config.LoadInterval));
+                }
+                return;
+            }
+
+            Log($"Selecting '{_inventoryPendingItem.Name}' in inventory list, then using context menu to place...");
+            InteractWithSelectedItem();
+            CurrentPendingPlacement = _inventoryPendingItem;
+            _inventoryPendingItem = null;
+            Svc.Framework.RunOnTick(ProcessNextInventoryPlacement, TimeSpan.FromMilliseconds(Config.LoadInterval));
+            return;
+        }
+
+        if (InventoryPlacementQueue.Count == 0)
+        {
+            CleanupInventoryPlacement();
+            return;
+        }
+
+        var (layoutItem, itemId, inventoryIndex, containerType) = InventoryPlacementQueue.Dequeue();
+
+        var addon = FindHousingInventoryAddon();
+        if (addon == null)
+        {
+            LogError("Housing inventory addon not found. Open housing edit menu first.");
+            CleanupInventoryPlacement();
+            return;
+        }
+
+        Log($"Selecting '{layoutItem.Name}' in inventory list, then using context menu to place...");
+
+        if (!SelectItemInInventoryAddon(addon, layoutItem))
+        {
+            if (_inventoryScrollPage > 0)
+            {
+                Svc.Framework.RunOnTick(ProcessNextInventoryPlacement, TimeSpan.FromMilliseconds(Config.LoadInterval));
+            }
+            else
+            {
+                LogError($"Could not find '{layoutItem.Name}' in the housing inventory addon");
+                Svc.Framework.RunOnTick(ProcessNextInventoryPlacement, TimeSpan.FromMilliseconds(Config.LoadInterval));
+            }
+            return;
+        }
+
+        InteractWithSelectedItem();
+
+        CurrentPendingPlacement = layoutItem;
+        Svc.Framework.RunOnTick(ProcessNextInventoryPlacement, TimeSpan.FromMilliseconds(Config.LoadInterval));
+    }
+
+    private static HousingItem? CurrentPendingPlacement = null;
+
+    private static unsafe AtkUnitBase* FindHousingInventoryAddon()
+    {
+        foreach (var name in new[] { "HousingGoods", "HousingInventory", "HousingEditList" })
+        {
+            AtkUnitBasePtr addonPtr = Svc.GameGui.GetAddonByName(name);
+            if (addonPtr != IntPtr.Zero)
+            {
+                var addon = (AtkUnitBase*)addonPtr.Address;
+                if (GenericHelpers.IsAddonReady(addon))
+                    return addon;
+            }
+        }
+        return null;
+    }
+
+    private static int _inventoryScrollPage = 0;
+    private static int _inventoryListLength = 0;
+    private static HousingItem? _inventoryPendingItem = null;
+
+    private static unsafe bool SelectItemInInventoryAddon(AtkUnitBase* addon, HousingItem layoutItem)
+    {
+        try
+        {
+            var treeListNode = addon->GetComponentNodeById(5);
+            if (treeListNode == null)
+                treeListNode = addon->GetComponentNodeById(10);
+            if (treeListNode == null)
+                treeListNode = addon->GetComponentNodeById(0);
+
+            if (treeListNode == null) return false;
+
+            var listComponent = (AtkComponentList*)treeListNode->Component;
+            var listLength = *(int*)((byte*)listComponent + 0x120);
+            var firstVisibleIndex = *(int*)((byte*)listComponent + 0x128);
+            var numVisibleItems = *(short*)((byte*)listComponent + 0x178);
+
+            if (listLength <= 0) return false;
+
+            var uldManager = &treeListNode->Component->UldManager;
+            var nodeListCount = uldManager->NodeListCount;
+
+            for (int i = 0; i < nodeListCount; i++)
+            {
+                var node = uldManager->NodeList[i];
+                if (node == null) continue;
+
+                var componentNode = node->GetAsAtkComponentNode();
+                if (componentNode == null) continue;
+
+                var childUld = &componentNode->Component->UldManager;
+                for (int j = 0; j < childUld->NodeListCount; j++)
+                {
+                    var child = childUld->NodeList[j];
+                    if (child == null) continue;
+
+                    var textNode = child->GetAsAtkTextNode();
+                    if (textNode == null) continue;
+
+                    var nodeText = textNode->NodeText.ToString();
+                    if (nodeText == layoutItem.Name)
+                    {
+                        var dataIndex = firstVisibleIndex + i;
+                        Callback.Fire(addon, true, 2, 0, dataIndex);
+                        Svc.Framework.RunOnTick(() => { }, TimeSpan.FromMilliseconds(200));
+                        _inventoryScrollPage = 0;
+                        _inventoryListLength = 0;
+                        _inventoryPendingItem = null;
+                        return true;
+                    }
+                }
+            }
+
+            if (listLength > numVisibleItems && numVisibleItems > 0)
+            {
+                _inventoryListLength = listLength;
+                _inventoryPendingItem = layoutItem;
+                var nextPage = _inventoryScrollPage + numVisibleItems;
+                if (nextPage < listLength)
+                {
+                    _inventoryScrollPage = nextPage;
+                    Callback.Fire(addon, true, 2, 0, nextPage);
+                }
+                else
+                {
+                    _inventoryScrollPage = 0;
+                    _inventoryListLength = 0;
+                    _inventoryPendingItem = null;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception e)
+        {
+            LogError($"Error selecting item in addon: {e.Message}");
+            _inventoryScrollPage = 0;
+            _inventoryListLength = 0;
+            _inventoryPendingItem = null;
+            return false;
+        }
+    }
+
+    private unsafe void OnContextMenuPostSetup(AddonEvent type, AddonArgs args)
+    {
+        if (CurrentPendingPlacement == null) return;
+
+        try
+        {
+            var addon = (AtkUnitBase*)args.Addon.Address;
+            var uldManager = &addon->UldManager;
+
+            for (int i = 0; i < uldManager->NodeListCount; i++)
+            {
+                var node = uldManager->NodeList[i];
+                if (node == null) continue;
+
+                var textNode = node->GetAsAtkTextNode();
+                if (textNode == null) continue;
+
+                var nodeText = textNode->NodeText.ToString();
+                if (nodeText is "布置" or "Place")
+                {
+                    Log($"Auto-selecting '{nodeText}' for {CurrentPendingPlacement.Name}");
+                    Callback.Fire(addon, true, 0, i);
+
+                    CurrentPendingPlacement = null;
+                    return;
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            LogError($"Context menu hook error: {e.Message}");
+            CurrentPendingPlacement = null;
+        }
+    }
+
+    private void CleanupInventoryPlacement()
+    {
+        _inventoryScrollPage = 0;
+        _inventoryListLength = 0;
+        _inventoryPendingItem = null;
+        Memory.Instance.SetPlaceAnywhere(OriginalPlaceAnywhere);
+        CurrentlyPlacingItems = false;
+        Log("Finished placing items from inventory/storage");
     }
 
     public void ApplyLayout(bool placeItemsOnly = false)
